@@ -29,6 +29,18 @@
             align-items: center;
         }
         h1 { font-size: 1.2rem; margin-bottom: 16px; color: #333; }
+
+        #camera-select {
+            width: 100%;
+            max-width: 400px;
+            padding: 10px;
+            margin-bottom: 16px;
+            border-radius: 8px;
+            border: 1px solid #ccc;
+            font-size: 1rem;
+            display: none;
+        }
+
         #reader {
             width: 100%;
             max-width: 400px;
@@ -45,7 +57,7 @@
             background: white;
             border-radius: 8px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            display: none; /* 初期状態は非表示 */
+            display: none;
         }
         .scanned-text {
             word-break: break-all;
@@ -87,7 +99,9 @@
 <body>
 
     <h1>QRコードリーダー</h1>
-    
+
+    <select id="camera-select"></select>
+
     <div id="reader"></div>
 
     <div id="result-container">
@@ -101,56 +115,97 @@
 
 <script>
 let html5QrcodeScanner;
+let currentCameraId = null;
 
-// 画面読み込み時にカメラを起動
+// 保存するためのキーの名前
+const STORAGE_KEY = 'preferred_camera_id';
+
 window.addEventListener('DOMContentLoaded', () => {
-    startScanner();
+    html5QrcodeScanner = new Html5Qrcode("reader");
+    initCamera();
 });
 
-function startScanner() {
-    // スキャナーの初期化設定（背面カメラ優先、1秒間に10フレーム解析）
-    html5QrcodeScanner = new Html5Qrcode("reader");
+// カメラ一覧を取得して起動する
+function initCamera() {
+    Html5Qrcode.getCameras().then(devices => {
+        if (devices && devices.length > 0) {
+            const cameraSelect = document.getElementById('camera-select');
+            cameraSelect.style.display = 'block';
+
+            devices.forEach(device => {
+                const option = document.createElement('option');
+                option.value = device.id;
+                option.text = device.label || `カメラ ${cameraSelect.length + 1}`;
+                cameraSelect.appendChild(option);
+            });
+
+            // 1. まず過去に保存したカメラIDがあるかチェック
+            const savedCameraId = localStorage.getItem(STORAGE_KEY);
+
+            // 保存されたIDが存在し、現在の端末のカメラ一覧にもあるか確認
+            if (savedCameraId && devices.some(d => d.id === savedCameraId)) {
+                currentCameraId = savedCameraId;
+            } else {
+                // 2. なければ「背面」っぽいカメラを探す（初回起動時）
+                const backCamera = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('背面'));
+                currentCameraId = backCamera ? backCamera.id : devices[devices.length - 1].id;
+            }
+
+            cameraSelect.value = currentCameraId;
+            startScanner({ deviceId: { exact: currentCameraId } });
+
+            // カメラを切り替えた時の処理
+            cameraSelect.addEventListener('change', (e) => {
+                currentCameraId = e.target.value;
+
+                // 選んだカメラIDをブラウザに記憶させる！
+                localStorage.setItem(STORAGE_KEY, currentCameraId);
+
+                html5QrcodeScanner.stop().then(() => {
+                    startScanner({ deviceId: { exact: currentCameraId } });
+                }).catch(err => console.error("カメラの切り替えに失敗しました", err));
+            });
+        } else {
+            currentCameraId = { facingMode: "environment" };
+            startScanner(currentCameraId);
+        }
+    }).catch(err => {
+        console.error("カメラ取得エラー:", err);
+        currentCameraId = { facingMode: "environment" };
+        startScanner(currentCameraId);
+    });
+}
+
+function startScanner(cameraConfig) {
     const config = { fps: 10, qrbox: { width: 250, height: 250 } };
 
     html5QrcodeScanner.start(
-        { facingMode: "environment" }, // 背面カメラを指定
+        cameraConfig,
         config,
         onScanSuccess
     ).catch(err => {
         console.error("カメラの起動に失敗しました:", err);
-        alert("カメラへのアクセスを許可してください。");
     });
 }
 
-// QRコードの読み取りに成功した時の処理
 function onScanSuccess(decodedText, decodedResult) {
-    // 成功したら一旦カメラを止める（連続読み取りを防ぐ）
     html5QrcodeScanner.stop().then(() => {
         processResult(decodedText);
     }).catch(err => console.error(err));
 }
 
-// 読み取ったデータの仕分けとアクション
 function processResult(text) {
     const resultContainer = document.getElementById('result-container');
     const scannedDataEl = document.getElementById('scanned-data');
     const actionButtonsEl = document.getElementById('action-buttons');
-    
-    // テキストを表示
-    scannedDataEl.textContent = text;
-    actionButtonsEl.innerHTML = ''; // ボタンエリアをクリア
 
-    // 1. 自動でクリップボードにコピー
+    scannedDataEl.textContent = text;
+    actionButtonsEl.innerHTML = '';
+
     navigator.clipboard.writeText(text).then(() => {
         showToast();
-    }).catch(err => {
-        console.error('コピー失敗:', err);
-    });
+    }).catch(err => console.error('コピー失敗:', err));
 
-    // 2. 内容に応じたボタンの生成
-    let hasAction = false;
-
-    // URL（リンク）だった場合
     if (text.startsWith('http://') || text.startsWith('https://')) {
         const linkBtn = document.createElement('a');
         linkBtn.href = text;
@@ -158,9 +213,7 @@ function processResult(text) {
         linkBtn.className = 'btn btn-primary';
         linkBtn.textContent = 'ブラウザで開く';
         actionButtonsEl.appendChild(linkBtn);
-        hasAction = true;
     }
-    // メアドだった場合（あるいは mailto: から始まる場合）
     else if (text.startsWith('mailto:') || text.includes('@') && !text.includes(' ')) {
         const mailHref = text.startsWith('mailto:') ? text : `mailto:${text}`;
         const mailBtn = document.createElement('a');
@@ -168,22 +221,25 @@ function processResult(text) {
         mailBtn.className = 'btn btn-success';
         mailBtn.textContent = 'メールを送信する';
         actionButtonsEl.appendChild(mailBtn);
-        hasAction = true;
     }
 
-    // 3. 画面の表示切り替え
     document.getElementById('reader').style.display = 'none';
+    document.getElementById('camera-select').style.display = 'none';
     resultContainer.style.display = 'block';
 }
 
-// 再スキャン
 function restartScanner() {
     document.getElementById('result-container').style.display = 'none';
     document.getElementById('reader').style.display = 'block';
-    startScanner();
+
+    const configToStart = typeof currentCameraId === 'object'
+        ? currentCameraId
+        : { deviceId: { exact: currentCameraId } };
+
+    startScanner(configToStart);
+    document.getElementById('camera-select').style.display = 'block';
 }
 
-// トースト通知を表示
 function showToast() {
     const toast = document.getElementById('toast');
     toast.style.display = 'block';

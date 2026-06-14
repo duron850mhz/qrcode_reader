@@ -49,6 +49,33 @@
             overflow: hidden;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
+
+        /* ズームスライダーのスタイル（追加） */
+        #zoom-container {
+            width: 100%;
+            max-width: 400px;
+            margin-top: 12px;
+            background: white;
+            padding: 12px 16px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            box-sizing: border-box;
+            display: none;
+            text-align: center;
+        }
+        #zoom-container label {
+            display: block;
+            font-size: 0.9rem;
+            color: #555;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        #zoom-slider {
+            width: 100%;
+            margin: 0;
+            cursor: pointer;
+        }
+
         #result-container {
             width: 100%;
             max-width: 400px;
@@ -103,6 +130,11 @@
     <select id="camera-select"></select>
 
     <div id="reader"></div>
+
+    <div id="zoom-container">
+        <label for="zoom-slider">ズーム: <span id="zoom-value">1.0</span>倍</label>
+        <input type="range" id="zoom-slider" min="1" max="5" step="0.1" value="1">
+    </div>
 
     <div id="result-container">
         <h3>読み取り結果</h3>
@@ -161,6 +193,9 @@ function initCamera() {
                 // 選んだカメラIDをブラウザに記憶させる！
                 localStorage.setItem(STORAGE_KEY, currentCameraId);
 
+                // カメラ切り替え時は一旦スライダーを隠す
+                document.getElementById('zoom-container').style.display = 'none';
+
                 html5QrcodeScanner.stop().then(() => {
                     startScanner({ deviceId: { exact: currentCameraId } });
                 }).catch(err => console.error("カメラの切り替えに失敗しました", err));
@@ -183,7 +218,43 @@ function startScanner(cameraConfig) {
         cameraConfig,
         config,
         onScanSuccess
-    ).catch(err => {
+    ).then(() => {
+        // カメラ起動から1秒後に、その端末がズーム対応か調べて初期化する（変更箇所）
+        setTimeout(() => {
+            try {
+                const capabilities = html5QrcodeScanner.getRunningTrackCapabilities();
+                // 端末がズーム機能（zoom）に対応している場合のみスライダーを出す
+                if (capabilities && capabilities.zoom) {
+                    const zoomSlider = document.getElementById('zoom-slider');
+                    const zoomContainer = document.getElementById('zoom-container');
+                    const zoomValue = document.getElementById('zoom-value');
+
+                    // スマホカメラ固有の最小値・最大値・刻み幅を自動セット
+                    zoomSlider.min = capabilities.zoom.min || 1;
+                    zoomSlider.max = capabilities.zoom.max || 5;
+                    zoomSlider.step = capabilities.zoom.step || 0.1;
+                    
+                    const settings = html5QrcodeScanner.getRunningTrackSettings();
+                    zoomSlider.value = settings.zoom || zoomSlider.min;
+                    zoomValue.textContent = parseFloat(zoomSlider.value).toFixed(1);
+
+                    // スライダーを表示
+                    zoomContainer.style.display = 'block';
+
+                    // スライダーを動かした時の処理
+                    zoomSlider.oninput = (e) => {
+                        const val = parseFloat(e.target.value);
+                        zoomValue.textContent = val.toFixed(1);
+                        html5QrcodeScanner.applyVideoConstraints({
+                            advanced: [{ zoom: val }]
+                        }).catch(err => console.error("ズーム適用失敗:", err));
+                    };
+                }
+            } catch (err) {
+                console.log("このブラウザ・端末は詳細なカメラ制御に非対応です", err);
+            }
+        }, 1000);
+    }).catch(err => {
         console.error("カメラの起動に失敗しました:", err);
     });
 }
@@ -195,6 +266,9 @@ function onScanSuccess(decodedText, decodedResult) {
 }
 
 function processResult(text) {
+    // 結果画面が出たらスライダーは隠す（変更箇所）
+    document.getElementById('zoom-container').style.display = 'none';
+
     const resultContainer = document.getElementById('result-container');
     const scannedDataEl = document.getElementById('scanned-data');
     const actionButtonsEl = document.getElementById('action-buttons');
@@ -229,6 +303,8 @@ function processResult(text) {
 }
 
 function restartScanner() {
+    // 再起動時は一旦スライダーを隠す（変更箇所）
+    document.getElementById('zoom-container').style.display = 'none';
     document.getElementById('result-container').style.display = 'none';
     document.getElementById('reader').style.display = 'block';
 

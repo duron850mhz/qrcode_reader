@@ -151,6 +151,7 @@ let currentCameraId = null;
 
 // 保存するためのキーの名前
 const STORAGE_KEY = 'preferred_camera_id';
+const ZOOM_STORAGE_KEY = 'preferred_zoom_level'; // ズーム保存用のキーを追加
 
 window.addEventListener('DOMContentLoaded', () => {
     html5QrcodeScanner = new Html5Qrcode("reader");
@@ -219,7 +220,7 @@ function startScanner(cameraConfig) {
         config,
         onScanSuccess
     ).then(() => {
-        // カメラ起動から1秒後に、その端末がズーム対応か調べて初期化する（変更箇所）
+        // カメラ起動から1秒後に、その端末がズーム対応か調べて初期化する
         setTimeout(() => {
             try {
                 const capabilities = html5QrcodeScanner.getRunningTrackCapabilities();
@@ -230,13 +231,25 @@ function startScanner(cameraConfig) {
                     const zoomValue = document.getElementById('zoom-value');
 
                     // スマホカメラ固有の最小値・最大値・刻み幅を自動セット
-                    zoomSlider.min = capabilities.zoom.min || 1;
-                    zoomSlider.max = capabilities.zoom.max || 5;
+                    const minZoom = capabilities.zoom.min || 1;
+                    const maxZoom = capabilities.zoom.max || 5;
+
+                    zoomSlider.min = minZoom;
+                    zoomSlider.max = maxZoom;
                     zoomSlider.step = capabilities.zoom.step || 0.1;
                     
-                    const settings = html5QrcodeScanner.getRunningTrackSettings();
-                    zoomSlider.value = settings.zoom || zoomSlider.min;
-                    zoomValue.textContent = parseFloat(zoomSlider.value).toFixed(1);
+                    // 保存されているズーム倍率があれば取得し、範囲内に収める
+                    const savedZoom = localStorage.getItem(ZOOM_STORAGE_KEY);
+                    let targetZoom = savedZoom ? parseFloat(savedZoom) : minZoom;
+                    targetZoom = Math.max(minZoom, Math.min(maxZoom, targetZoom));
+
+                    zoomSlider.value = targetZoom;
+                    zoomValue.textContent = targetZoom.toFixed(1);
+
+                    // 保存されたズーム倍率をカメラに適用
+                    html5QrcodeScanner.applyVideoConstraints({
+                        advanced: [{ zoom: targetZoom }]
+                    }).catch(err => console.error("初期ズーム適用失敗:", err));
 
                     // スライダーを表示
                     zoomContainer.style.display = 'block';
@@ -245,6 +258,10 @@ function startScanner(cameraConfig) {
                     zoomSlider.oninput = (e) => {
                         const val = parseFloat(e.target.value);
                         zoomValue.textContent = val.toFixed(1);
+
+                        // ズーム倍率をlocalStorageに保存
+                        localStorage.setItem(ZOOM_STORAGE_KEY, val);
+
                         html5QrcodeScanner.applyVideoConstraints({
                             advanced: [{ zoom: val }]
                         }).catch(err => console.error("ズーム適用失敗:", err));
@@ -266,7 +283,7 @@ function onScanSuccess(decodedText, decodedResult) {
 }
 
 function processResult(text) {
-    // 結果画面が出たらスライダーは隠す（変更箇所）
+    // 結果画面が出たらスライダーは隠す
     document.getElementById('zoom-container').style.display = 'none';
 
     const resultContainer = document.getElementById('result-container');
@@ -303,7 +320,7 @@ function processResult(text) {
 }
 
 function restartScanner() {
-    // 再起動時は一旦スライダーを隠す（変更箇所）
+    // 再起動時は一旦スライダーを隠す
     document.getElementById('zoom-container').style.display = 'none';
     document.getElementById('result-container').style.display = 'none';
     document.getElementById('reader').style.display = 'block';
